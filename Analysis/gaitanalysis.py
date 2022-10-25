@@ -22,6 +22,59 @@ class Recording2D(ABC):
         self.recorded_framerate = recorded_framerate
         self.metadata = self._retrieve_metadata(filepath = filepath)
         
+    def run(self, intrinsic_camera_calibration_filepath: Optional[Path]=None, video_filepath: Optional[Path] = None)->None:
+        self._calculate_center_of_gravity()
+        if intrinsic_camera_calibration_filepath != None and video_filepath != None:
+            K, D = self._load_intrinsic_camera_calibration(intrinsic_camera_calibration_filepath = intrinsic_camera_calibration_filepath)
+            image = iio.imread(video_filepath, index = 0)
+            size = image.shape[1], image.shape[0]
+            self.camera_parameters_for_undistortion = {'K': K, 'D': D, 'size': size}
+        else:
+            print("Distorted Points reflect the real-world distances poorly.\n To undistort, pass an intrinsic_camera_calibration_filepath and the video_filepath!")
+            self.camera_parameters_for_undistortion = None
+        self._create_all_bodyparts()
+        self._normalize_coordinate_system()
+        self._run_basic_operations_on_bodyparts()
+        
+    def run_gait_analysis(self)->None:
+        """
+        Function, that runs functions, necessary for gait analysis.
+
+        Angles between bodyparts of interest are calculated as Angle objects.
+        A peak detection algorithm on paw_speed is used to detect steps.
+        EventBouts are created.
+        """
+        self._calculate_angles()
+        self._detect_steps()
+        self._calculate_parameters_for_gait_analysis()
+        self.parameter_dict = { 'HindPawRight': 
+                               {'angle_paw_knee_centerofgravity_right': self.angle_paw_knee_centerofgravity_right.parameter_array, 
+                                'angle_paw_knee_bodyaxis_right': self.angle_paw_knee_bodyaxis_right.parameter_array, 
+                                'angle_paw_secondfinger_bodyaxis_hind_right': self.angle_paw_secondfinger_bodyaxis_hind_right.parameter_array, 
+                                'angle_paw_fifthfinger_bodyaxis_hind_right': self.angle_paw_fifthfinger_bodyaxis_hind_right.parameter_array, 
+                                'hind_stance_right': self.hind_stance_right.parameter_array, 
+                                'hind_stance': self.hind_stance, 
+                                'area_hindpawright': self.area_hindpawright},
+         'HindPawLeft': {'angle_paw_knee_centerofgravity_left': self.angle_paw_knee_centerofgravity_left.parameter_array,
+                         'angle_paw_knee_bodyaxis_left': self.angle_paw_knee_bodyaxis_left.parameter_array, 
+                         'angle_paw_secondfinger_bodyaxis_hind_left': self.angle_paw_secondfinger_bodyaxis_hind_left.parameter_array, 
+                         'angle_paw_fifthfinger_bodyaxis_hind_left': self.angle_paw_fifthfinger_bodyaxis_hind_left.parameter_array, 
+                         'hind_stance_left': self.hind_stance_left.parameter_array, 
+                         'hind_stance': self.hind_stance, 
+                         'area_hindpawleft': self.area_hindpawleft},
+         'ForePawRight': {'angle_paw_secondfinger_bodyaxis_fore_left': self.angle_paw_secondfinger_bodyaxis_fore_left.parameter_array, 
+                          'angle_paw_fifthfinger_bodyaxis_fore_left': self.angle_paw_fifthfinger_bodyaxis_fore_left.parameter_array, 
+                          'fore_stance_left': self.fore_stance_left.parameter_array, 
+                          'fore_stance': self.fore_stance},
+         'ForePawLeft': {'angle_paw_secondfinger_bodyaxis_fore_right': self.angle_paw_secondfinger_bodyaxis_fore_right.parameter_array, 
+                         'angle_paw_fifthfinger_bodyaxis_fore_right': self.angle_paw_fifthfinger_bodyaxis_fore_right.parameter_array, 
+                         'fore_stance_right': self.fore_stance_right.parameter_array, 
+                         'fore_stance': self.fore_stance}
+        }
+        self._add_angles_to_steps()
+        self._create_PSTHs()
+        self._parameters_when_paw_placed()
+        
         
     def _get_df_from_hdf(self, filepath: Path)->pd.DataFrame:
         #if not filepath.endswith('.h5'):
@@ -38,7 +91,6 @@ class Recording2D(ABC):
         df = df.astype(float)
         return df
     
-    
     def _retrieve_metadata(self, filepath: str)->Dict:
         """
         relying on this file naming: 196_F7-27_220826_OTT_Bottom_synchronizedDLC_resnet152_OT_BottomCam_finalSep20shuffle1_550000filtered.h5
@@ -47,23 +99,7 @@ class Recording2D(ABC):
         animal = filepath_slices[2]
         paradigm = filepath_slices[3]
         recording_date = filepath_slices[4][:-3]
-        
         return {'recording_date': recording_date, 'animal': animal, 'paradigm': paradigm}
-
-        
-    def run(self, intrinsic_camera_calibration_filepath: Optional[Path]=None, xy_offset: Optional[Tuple[int]] = None, video_filepath: Optional[Path] = None)->None:
-        self._calculate_center_of_gravity()
-        if intrinsic_camera_calibration_filepath != None and xy_offset != None and video_filepath != None:
-            K, D = self._load_intrinsic_camera_calibration(intrinsic_camera_calibration_filepath = intrinsic_camera_calibration_filepath, x_offset=xy_offset[0], y_offset=xy_offset[1])
-            image = iio.imread(video_filepath, index = 0)
-            size = image.shape[1], image.shape[0]
-            self.camera_parameters_for_undistortion = {'K': K, 'D': D, 'size': size}
-        else:
-            print("Distorted Points reflect the real-world distances poorly.\n To undistort, pass an intrinsic_camera_calibration_filepath, the xy_offset of cropping and the video_filepath!")
-            self.camera_parameters_for_undistortion = None
-        self._create_all_bodyparts()
-        self._normalize_coordinate_system()
-        self._run_basic_operations_on_bodyparts()
 
     def _calculate_center_of_gravity(self)->None:
         for coordinate in ['x', 'y']:
@@ -100,38 +136,21 @@ class Recording2D(ABC):
         conversion_factor = (50/length)
         return conversion_factor
     
-    
-    def _load_intrinsic_camera_calibration(self, intrinsic_camera_calibration_filepath: Path, x_offset: int, y_offset: int) -> Tuple[np.array, np.array]:
+    def _load_intrinsic_camera_calibration(self, intrinsic_camera_calibration_filepath: Path) -> Tuple[np.array, np.array]:
         with open(intrinsic_camera_calibration_filepath, 'rb') as io:
             intrinsic_calibration = pickle.load(io)
-        adjusted_K = intrinsic_calibration['K'].copy()
-        adjusted_K[0][2] = adjusted_K[0][2] - x_offset
-        adjusted_K[1][2] = adjusted_K[1][2] - y_offset
-        return adjusted_K, intrinsic_calibration['D']
+        return intrinsic_calibration['K'], intrinsic_calibration['D']
 
         
     def _run_basic_operations_on_bodyparts(self)->None:
         for bodypart in self.bodyparts.values():
             bodypart.run_basic_operations(recorded_framerate = self.recorded_framerate)
-            
-   
-    
-    def get_freezing_bouts(self)->None:
-        self._get_direction()
-        self._get_turns()
-        self._check_immobility_of_all_freezing_bodyparts()        
-        # create class for each parameter and abstract parent class?
-        self._get_immobility_bouts()
-        # think of better definition of freezing/immobility
-        self._run_operations_on_immobility_bouts()
-        self._collect_freezing_bouts()
 
         
     def _get_direction(self)->None:
         self.facing_towards_open_end = self._initialize_new_parameter(dtype=bool)
         self.facing_towards_open_end.loc[(self.bodyparts['Snout'].df.loc[:, 'x']>self.bodyparts['EarLeft'].df.loc[:, 'x']) &
                                     (self.bodyparts['Snout'].df.loc[:, 'x']>self.bodyparts['EarRight'].df.loc[:, 'x'])] = True
-        
         
     def _get_turns(self)->None:
         turn_indices = self.facing_towards_open_end.where(self.facing_towards_open_end.diff()==True).dropna().index
@@ -142,59 +161,17 @@ class Recording2D(ABC):
         for turning_bout in self.turns_to_open:
             turning_bout.get_position(centerofgravity=self.bodyparts["centerofgravity"])
 
-
     def _initialize_new_parameter(self, dtype: type)->pd.Series:
         """        
         pd.Series of an array in shape of n_frames with default values set to 0 (if dtype bool->False)
         """
-        return pd.Series(np.zeros_like(np.arange(self.full_df_from_hdf.shape[0]), dtype = dtype))
-    
-               
-    def run_gait_analysis(self)->None:
-        """
-        Function, that runs functions, necessary for gait analysis.
-        
-        Angles between bodyparts of interest are calculated as Angle objects.
-        A peak detection algorithm on paw_speed is used to detect steps.
-        EventBouts are created.
-        """
-        self._calculate_angles()
-        self._detect_steps()
-        self._calculate_parameters_for_gait_analysis()
-        self.parameter_dict = { 'HindPawRight': 
-                               {'angle_paw_knee_centerofgravity_right': self.angle_paw_knee_centerofgravity_right.parameter_array, 
-                                'angle_paw_knee_bodyaxis_right': self.angle_paw_knee_bodyaxis_right.parameter_array, 
-                                'angle_paw_secondfinger_bodyaxis_hind_right': self.angle_paw_secondfinger_bodyaxis_hind_right.parameter_array, 
-                                'angle_paw_fifthfinger_bodyaxis_hind_right': self.angle_paw_fifthfinger_bodyaxis_hind_right.parameter_array, 
-                                'hind_stance_right': self.hind_stance_right.parameter_array, 
-                                'hind_stance': self.hind_stance, 
-                                'area_hindpawright': self.area_hindpawright},
-         'HindPawLeft': {'angle_paw_knee_centerofgravity_left': self.angle_paw_knee_centerofgravity_left.parameter_array,
-                         'angle_paw_knee_bodyaxis_left': self.angle_paw_knee_bodyaxis_left.parameter_array, 
-                         'angle_paw_secondfinger_bodyaxis_hind_left': self.angle_paw_secondfinger_bodyaxis_hind_left.parameter_array, 
-                         'angle_paw_fifthfinger_bodyaxis_hind_left': self.angle_paw_fifthfinger_bodyaxis_hind_left.parameter_array, 
-                         'hind_stance_left': self.hind_stance_left.parameter_array, 
-                         'hind_stance': self.hind_stance, 
-                         'area_hindpawleft': self.area_hindpawleft},
-         'ForePawRight': {'angle_paw_secondfinger_bodyaxis_fore_left': self.angle_paw_secondfinger_bodyaxis_fore_left.parameter_array, 
-                          'angle_paw_fifthfinger_bodyaxis_fore_left': self.angle_paw_fifthfinger_bodyaxis_fore_left.parameter_array, 
-                          'fore_stance_left': self.fore_stance_left.parameter_array, 
-                          'fore_stance': self.fore_stance},
-         'ForePawLeft': {'angle_paw_secondfinger_bodyaxis_fore_right': self.angle_paw_secondfinger_bodyaxis_fore_right.parameter_array, 
-                         'angle_paw_fifthfinger_bodyaxis_fore_right': self.angle_paw_fifthfinger_bodyaxis_fore_right.parameter_array, 
-                         'fore_stance_right': self.fore_stance_right.parameter_array, 
-                         'fore_stance': self.fore_stance}
-        }
-        self._add_angles_to_steps()
-        self._create_PSTHs()
-        #self.calculate max
-        
+        return pd.Series(np.zeros_like(np.arange(self.full_df_from_hdf.shape[0]), dtype = dtype))        
         
     def _detect_steps(self)->None:
         """
         Function that runs step detection in the individual paw Bodypart objects.
         """
-        self.steps_per_paw = {paw : self.bodyparts[paw]._detect_steps() for paw in ['HindPawRight', 'HindPawLeft', 'ForePawRight', 'ForePawLeft']}
+        self.steps_per_paw = {paw : self.bodyparts[paw].detect_steps() for paw in ['HindPawRight', 'HindPawLeft', 'ForePawRight', 'ForePawLeft']}
         
     def _calculate_angles(self)->None:
         """
@@ -243,8 +220,18 @@ class Recording2D(ABC):
         (self.bodyparts['HindPawLeft'].df['y']-self.bodyparts['HindPawLeftFifthFinger'].df['y']))))
     
     def _create_PSTHs(self)->None:
-        pass
-
+        self.parameters_as_psth = {}
+        for parameter in self.parameters_over_steps:
+            psth = self.parameters_over_steps[parameter].mean(axis = 0)
+            self.parameters_as_psth[parameter] = psth
+            
+    def _parameters_when_paw_placed(self)->None:
+        self.parameters_paw_placed = {}
+        for parameter in self.parameters_over_steps:
+            paw_placed = self.parameters_over_steps[parameter][:, 12].mean()
+            self.parameters_paw_placed[parameter] = paw_placed
+    
+    
     
 class Stance2D():
     """
@@ -303,11 +290,7 @@ class Stance2D():
         sx = (t2 - t1)/(m1 - m2)
         sy = m2 * sx + t2
         return (sx, sy)
-
-        
-class Parameter2D():
-    def __init__(self):
-        pass
+    
 
         
 class Bodypart2D():
@@ -319,19 +302,34 @@ class Bodypart2D():
             self._undistort_points(camera_parameters_for_undistortion)
         else:
             self.df_points = self.df_raw
-        
-    def _get_sliced_df(self, df: pd.DataFrame)->None:
-        self.df_raw = pd.DataFrame(data={'x': df.loc[:, self.id + '_x'], 'y': df.loc[:, self.id + '_y'], 'likelihood': df.loc[:, self.id + '_likelihood']})
+            
     
-        
     def normalize_df(self, translation_vector: np.array, rotation_angle: float, conversion_factor: float)->None:
         translated_df = self._translate_df(translation_vector=translation_vector)
         rotated_df = self._rotate_df(rotation_angle=rotation_angle, df=translated_df)
         self.df = self._convert_df_to_cm(conversion_factor=conversion_factor, df=rotated_df)
-    
-    
-    def _identify_duplicates(self)->None:
-        pass
+        
+    def run_basic_operations(self, recorded_framerate: int)->None:
+        self._exclude_frames()
+        self._get_speed(recorded_framerate = recorded_framerate)
+        self._get_rolling_speed()
+        
+    def detect_steps(self)->List['Step']:
+        speed = self.df["speed_cm_per_s"].copy()
+        #Data smoothening:
+        #x = np.arange(0, len(speed))
+        #speed = np.nan_to_num(speed, copy=True)
+        #spline = interpolate.UnivariateSpline(x, speed, s=1)
+        #speed = spline(x)
+
+        peaks = find_peaks(speed, prominence=50)
+        steps_per_paw = self._create_steps(steps=peaks[0])
+        self.steps = steps_per_paw
+        return steps_per_paw
+        
+        
+    def _get_sliced_df(self, df: pd.DataFrame)->None:
+        self.df_raw = pd.DataFrame(data={'x': df.loc[:, self.id + '_x'], 'y': df.loc[:, self.id + '_y'], 'likelihood': df.loc[:, self.id + '_likelihood']})
     
     def _translate_df(self, translation_vector: np.array)->pd.DataFrame:
         translated_df = self.df_points.loc[:, ('x', 'y')] + translation_vector
@@ -350,50 +348,16 @@ class Bodypart2D():
         df.loc[:, ('x', 'y')]*=conversion_factor
         return df
         
-    def run_basic_operations(self, recorded_framerate: int)->None:
-        self._exclude_frames()
-        self._get_speed(recorded_framerate = recorded_framerate)
-        self._get_rolling_speed()
-        self._get_immobility()
-        
     def _exclude_frames(self)->None:
-        # check for reprojection error (checking for outliers should already be done before triangulation)
         pass
     
     def _get_speed(self, recorded_framerate: int)->None:
         self.df.loc[:, 'speed_cm_per_s'] = np.NaN
         self.df.loc[:, 'speed_cm_per_s'] = (np.sqrt(self.df.loc[:, 'x'].diff()**2 + self.df.loc[:, 'y'].diff()**2)) / (1/recorded_framerate)        
     
-    
     def _get_rolling_speed(self)->None:
         self.df.loc[:, 'rolling_speed_cm_per_s'] = np.NaN
         self.df.loc[:, 'rolling_speed_cm_per_s'] = self.df.loc[:, 'speed_cm_per_s'].rolling(5, min_periods=3, center=True).mean()
-
-    @property
-    def immobility_threshold(self) -> float:
-        return 3.
-        #arbitrary chosen
-    
-    @property
-    def dlc_likelihood_threshold(self)->float:
-        return 0.6
-    
-    def _get_immobility(self)->None:
-        self.df.loc[:, 'immobility'] = False
-        self.df.loc[self.df['rolling_speed_cm_per_s'] < self.immobility_threshold, 'immobility'] = True     
-        
-    def _detect_steps(self)->List['Step']:
-        speed = self.df["speed_cm_per_s"].copy()
-        #Data smoothening:
-        #x = np.arange(0, len(speed))
-        #speed = np.nan_to_num(speed, copy=True)
-        #spline = interpolate.UnivariateSpline(x, speed, s=1)
-        #speed = spline(x)
-
-        peaks = find_peaks(speed, prominence=50)
-        steps_per_paw = self._create_steps(steps=peaks[0])
-        self.steps = steps_per_paw
-        return steps_per_paw
             
     def _create_steps(self, steps: List)->List['Step']:
         """
@@ -409,9 +373,6 @@ class Bodypart2D():
         points_undistorted = np.squeeze(points_undistorted)
         self.df_points = pd.DataFrame()
         self.df_points[['x', 'y']] = points_undistorted
-        
-        
-        
                 
                     
                     
@@ -424,20 +385,9 @@ class EventBout2D():
             self.end_index = start_index
         self._create_dict()
 
-    @property
-    def freezing_threshold(self) -> float:
-        return 2.
-
     def check_direction(self, facing_towards_open_end: pd.Series)->None:
         self.facing_towards_open_end = facing_towards_open_end.iloc[self.start_index]
         self.dict['facing_towards_open_end']=self.facing_towards_open_end
-
-    def check_that_freezing_threshold_was_reached(self, recorded_framerate: int)->None:
-        self.duration = (self.end_index - self.start_index)/recorded_framerate
-        self.freezing_threshold_reached = False
-        if self.duration > self.freezing_threshold:
-            self.freezing_threshold_reached = True
-        self.dict['freezing_threshold_reached']=self.freezing_threshold_reached
 
     def get_position(self, centerofgravity: Bodypart2D)->None:
         self.x_position=centerofgravity.df.loc[self.start_index, 'x']
@@ -445,6 +395,7 @@ class EventBout2D():
 
     def _create_dict(self)->None:
         self.dict = {}
+        
         
         
 class Angle2D():
@@ -464,6 +415,8 @@ class Angle2D():
             self.parameter_array = self._angle_between_two_lines()
         else:
             print('Could not calculate an angle for the given parameters')
+        self.parameter_array = self.parameter_array.where(self.parameter_array>0, 180 + self.parameter_array)
+        # converting all angles to positive values
         
     def _calculate_angle_between_three_bodyparts(self)->np.array:
         """
@@ -500,6 +453,7 @@ class Angle2D():
         tan = (m1 - m2) / (1 + m1 * m2)
         angle = np.degrees(np.arctan(tan))
         return angle
+        
         
         
 class Step():
