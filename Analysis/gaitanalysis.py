@@ -17,10 +17,9 @@ from scipy.signal import savgol_filter
 
 class Recording2D(ABC):
     @property
-    def likelihood_threshold(self)->float:
+    def likelihood_threshold(self) -> float:
         return 0.5
-    
-    
+
     def __init__(self, filepath: Path, recorded_framerate: int) -> None:
         self.filepath = filepath
         self.full_df_from_hdf = self._get_df_from_hdf(filepath=filepath)
@@ -35,8 +34,8 @@ class Recording2D(ABC):
         self._calculate_center_of_gravity()
         if intrinsic_camera_calibration_filepath != None:
             K, D = self._load_intrinsic_camera_calibration(
-                    intrinsic_camera_calibration_filepath=intrinsic_camera_calibration_filepath
-                )
+                intrinsic_camera_calibration_filepath=intrinsic_camera_calibration_filepath
+            )
             if video_filepath != None:
                 image = iio.imread(video_filepath, index=0)
                 size = image.shape[1], image.shape[0]
@@ -184,7 +183,7 @@ class Recording2D(ABC):
                 translation_vector=translation_vector,
                 rotation_angle=rotation_angle,
                 conversion_factor=conversion_factor,
-                likelihood_threshold = self.likelihood_threshold
+                likelihood_threshold=self.likelihood_threshold,
             )
 
     def _get_conversion_factor_px_to_cm(self, length: float) -> float:
@@ -251,7 +250,9 @@ class Recording2D(ABC):
         Function that runs step detection in the individual paw Bodypart objects.
         """
         self.steps_per_paw = {
-            paw: self.bodyparts[paw].detect_steps(likelihood_threshold=self.likelihood_threshold)
+            paw: self.bodyparts[paw].detect_steps(
+                likelihood_threshold=self.likelihood_threshold
+            )
             for paw in ["HindPawRight", "HindPawLeft", "ForePawRight", "ForePawLeft"]
         }
 
@@ -452,7 +453,7 @@ class Recording2D(ABC):
     def _create_PSTHs(self) -> None:
         self.parameters_as_psth = {}
         for parameter in self.parameters_over_steps:
-            psth = np.median(self.parameters_over_steps[parameter], axis = 0)
+            psth = np.median(self.parameters_over_steps[parameter], axis=0)
             self.parameters_as_psth[parameter] = psth
 
     def _parameters_when_paw_placed(self) -> None:
@@ -549,17 +550,21 @@ class Bodypart2D:
         translation_vector: np.array,
         rotation_angle: float,
         conversion_factor: float,
-        likelihood_threshold: float
+        likelihood_threshold: float,
     ) -> None:
         translated_df = self._translate_df(translation_vector=translation_vector)
         window_length = self._get_max_odd_n_frames_for_time_interval()
-        smoothed_df = self._smoothen_df(df = translated_df, window_length = window_length)
-        interpolated_df = self._interpolate_low_likelihood_intervals(df = smoothed_df, max_interval_length = window_length, likelihood_threshold = likelihood_threshold)
+        smoothed_df = self._smoothen_df(df=translated_df, window_length=window_length)
+        interpolated_df = self._interpolate_low_likelihood_intervals(
+            df=smoothed_df,
+            max_interval_length=window_length,
+            likelihood_threshold=likelihood_threshold,
+        )
         rotated_df = self._rotate_df(rotation_angle=rotation_angle, df=interpolated_df)
         self.df = self._convert_df_to_cm(
             conversion_factor=conversion_factor, df=rotated_df
         )
-      
+
     def run_basic_operations(self, recorded_framerate: int) -> None:
         self._get_speed(recorded_framerate=recorded_framerate)
         self._get_rolling_speed()
@@ -568,7 +573,11 @@ class Bodypart2D:
         speed = self.df["rolling_speed_cm_per_s"].copy()
         peaks = find_peaks(speed, prominence=10)
         peaks_clean = peaks[0]
-        peaks_clean = [peak_idx for peak_idx in peaks[0] if self.df.loc[peak_idx, 'likelihood'] >= likelihood_threshold]
+        peaks_clean = [
+            peak_idx
+            for peak_idx in peaks[0]
+            if self.df.loc[peak_idx, "likelihood"] >= likelihood_threshold
+        ]
         steps_per_paw = self._create_steps(steps=peaks_clean)
         self.steps = steps_per_paw
         return steps_per_paw
@@ -584,7 +593,7 @@ class Bodypart2D:
 
     def _translate_df(self, translation_vector: np.array) -> pd.DataFrame:
         translated_df = self.df_points.loc[:, ("x", "y")] + translation_vector
-        translated_df['likelihood'] = self.df_points['likelihood']
+        translated_df["likelihood"] = self.df_points["likelihood"]
         return translated_df
 
     def _rotate_df(self, rotation_angle: float, df: pd.DataFrame) -> pd.DataFrame:
@@ -603,19 +612,22 @@ class Bodypart2D:
     ) -> pd.DataFrame:
         df.loc[:, ("x", "y")] *= -conversion_factor
         return df
-    
-      
-    def _smoothen_df(self, df: pd.DataFrame, window_length: int)->pd.DataFrame:
+
+    def _smoothen_df(self, df: pd.DataFrame, window_length: int) -> pd.DataFrame:
         smoothed_df = df.copy()
-        column_names =  ['x', 'y']
+        column_names = ["x", "y"]
         column_idxs_to_smooth = smoothed_df.columns.get_indexer(column_names)
-        smoothed_df.iloc[:, column_idxs_to_smooth] = savgol_filter(x = smoothed_df.iloc[:, column_idxs_to_smooth],
-                                                                   window_length = window_length,
-                                                                   polyorder = 3,
-                                                                   axis = 0)
+        smoothed_df.iloc[:, column_idxs_to_smooth] = savgol_filter(
+            x=smoothed_df.iloc[:, column_idxs_to_smooth],
+            window_length=window_length,
+            polyorder=3,
+            axis=0,
+        )
         return smoothed_df
-        
-    def _get_max_odd_n_frames_for_time_interval(self, fps: int=30, time_interval: float = 0.5) -> int:
+
+    def _get_max_odd_n_frames_for_time_interval(
+        self, fps: int = 30, time_interval: float = 0.5
+    ) -> int:
         assert type(fps) == int, '"fps" has to be an integer!'
         frames_per_time_interval = fps * time_interval
         if frames_per_time_interval % 2 == 0:
@@ -628,49 +640,74 @@ class Bodypart2D:
                 max_odd_frame_count = frames_per_time_interval - 1
             else:
                 max_odd_frame_count = frames_per_time_interval
-        assert max_odd_frame_count > 0, f'The specified time interval is too short to fit an odd number of frames'
-        return int(max_odd_frame_count)      
-        
-        
-    
-    def _interpolate_low_likelihood_intervals(self, df: pd.DataFrame, max_interval_length: int, likelihood_threshold: float) -> pd.DataFrame:
+        assert (
+            max_odd_frame_count > 0
+        ), f"The specified time interval is too short to fit an odd number of frames"
+        return int(max_odd_frame_count)
+
+    def _interpolate_low_likelihood_intervals(
+        self, df: pd.DataFrame, max_interval_length: int, likelihood_threshold: float
+    ) -> pd.DataFrame:
         interpolated_df = df.copy()
-        low_likelihood_interval_border_idxs = self._get_low_likelihood_interval_border_idxs(likelihood_series = interpolated_df['likelihood'], 
-                                                                                            max_interval_length = max_interval_length, 
-                                                                                            min_likelihood_threshold = likelihood_threshold)
+        low_likelihood_interval_border_idxs = (
+            self._get_low_likelihood_interval_border_idxs(
+                likelihood_series=interpolated_df["likelihood"],
+                max_interval_length=max_interval_length,
+                min_likelihood_threshold=likelihood_threshold,
+            )
+        )
         for start_idx, end_idx in low_likelihood_interval_border_idxs:
             if (start_idx - 1 >= 0) and (end_idx + 2 < interpolated_df.shape[0]):
-                interpolated_df['x'][start_idx - 1 : end_idx + 2] = interpolated_df['x'][start_idx - 1 : end_idx + 2].interpolate()
-                interpolated_df['y'][start_idx - 1 : end_idx + 2] = interpolated_df['y'][start_idx - 1 : end_idx + 2].interpolate()
-                interpolated_df[f'likelihood'][start_idx : end_idx + 1] = 0.5
-        return interpolated_df    
+                interpolated_df["x"][start_idx - 1 : end_idx + 2] = interpolated_df[
+                    "x"
+                ][start_idx - 1 : end_idx + 2].interpolate()
+                interpolated_df["y"][start_idx - 1 : end_idx + 2] = interpolated_df[
+                    "y"
+                ][start_idx - 1 : end_idx + 2].interpolate()
+                interpolated_df[f"likelihood"][start_idx : end_idx + 1] = 0.5
+        return interpolated_df
 
-
-    def _get_low_likelihood_interval_border_idxs(self, likelihood_series: pd.Series, max_interval_length: int, min_likelihood_threshold: float=0.7, framerate: int=30) -> List[Tuple[int, int]]:
-        all_low_likelihood_idxs = np.where(likelihood_series.values < min_likelihood_threshold)[0]
-        short_low_likelihood_interval_border_idxs = self._get_interval_border_idxs(all_matching_idxs = all_low_likelihood_idxs,
-                                                                                   max_interval_duration = max_interval_length*framerate)
+    def _get_low_likelihood_interval_border_idxs(
+        self,
+        likelihood_series: pd.Series,
+        max_interval_length: int,
+        min_likelihood_threshold: float = 0.7,
+        framerate: int = 30,
+    ) -> List[Tuple[int, int]]:
+        all_low_likelihood_idxs = np.where(
+            likelihood_series.values < min_likelihood_threshold
+        )[0]
+        short_low_likelihood_interval_border_idxs = self._get_interval_border_idxs(
+            all_matching_idxs=all_low_likelihood_idxs,
+            max_interval_duration=max_interval_length * framerate,
+        )
         return short_low_likelihood_interval_border_idxs
-       
-    
-    def _get_interval_border_idxs(self,
-                                  all_matching_idxs: np.ndarray, 
-                                  min_interval_duration: Optional[float]=None, 
-                                  max_interval_duration: Optional[float]=None,
-                                  framerate: int=30
-                                 ) -> List[Tuple[int, int]]:
+
+    def _get_interval_border_idxs(
+        self,
+        all_matching_idxs: np.ndarray,
+        min_interval_duration: Optional[float] = None,
+        max_interval_duration: Optional[float] = None,
+        framerate: int = 30,
+    ) -> List[Tuple[int, int]]:
         interval_border_idxs = []
         if all_matching_idxs.shape[0] >= 1:
             step_idxs = np.where(np.diff(all_matching_idxs) > 1)[0]
-            step_end_idxs = np.concatenate([step_idxs, np.array([all_matching_idxs.shape[0] - 1])])
+            step_end_idxs = np.concatenate(
+                [step_idxs, np.array([all_matching_idxs.shape[0] - 1])]
+            )
             step_start_idxs = np.concatenate([np.array([0]), step_idxs + 1])
             interval_start_idxs = all_matching_idxs[step_start_idxs]
             interval_end_idxs = all_matching_idxs[step_end_idxs]
             for start_idx, end_idx in zip(interval_start_idxs, interval_end_idxs):
-                interval_frame_count = (end_idx+1) - start_idx
-                interval_duration = interval_frame_count * framerate          
+                interval_frame_count = (end_idx + 1) - start_idx
+                interval_duration = interval_frame_count * framerate
                 if (min_interval_duration != None) and (max_interval_duration != None):
-                    append_interval = min_interval_duration <= interval_duration <= max_interval_duration 
+                    append_interval = (
+                        min_interval_duration
+                        <= interval_duration
+                        <= max_interval_duration
+                    )
                 elif min_interval_duration != None:
                     append_interval = min_interval_duration <= interval_duration
                 elif max_interval_duration != None:
@@ -679,9 +716,8 @@ class Bodypart2D:
                     append_interval = True
                 if append_interval:
                     interval_border_idxs.append((start_idx, end_idx))
-        return interval_border_idxs    
+        return interval_border_idxs
 
-    
     def _get_speed(self, recorded_framerate: int) -> None:
         self.df.loc[:, "speed_cm_per_s"] = np.NaN
         self.df.loc[:, "speed_cm_per_s"] = (
@@ -726,7 +762,7 @@ class Bodypart2D:
         points_undistorted = np.squeeze(points_undistorted)
         self.df_points = pd.DataFrame()
         self.df_points[["x", "y"]] = points_undistorted
-        self.df_points['likelihood'] = self.df_raw['likelihood']
+        self.df_points["likelihood"] = self.df_raw["likelihood"]
 
 
 class EventBout2D:
