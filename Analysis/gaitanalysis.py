@@ -68,6 +68,7 @@ class Recording2D(ABC):
                 "angle_paw_knee_bodyaxis_right": self.angle_paw_knee_bodyaxis_right.parameter_array,
                 "angle_paw_secondfinger_bodyaxis_hind_right": self.angle_paw_secondfinger_bodyaxis_hind_right.parameter_array,
                 "angle_paw_fifthfinger_bodyaxis_hind_right": self.angle_paw_fifthfinger_bodyaxis_hind_right.parameter_array,
+                "angle_paw_secondfinger_fifthfinger_hind_right": self.angle_paw_right_fifthfinger_secondfinger.parameter_array,
                 "hind_stance_right": self.hind_stance_right.parameter_array,
                 "hind_stance": self.hind_stance,
                 "area_hindpawright": self.area_hindpawright,
@@ -77,6 +78,7 @@ class Recording2D(ABC):
                 "angle_paw_knee_bodyaxis_left": self.angle_paw_knee_bodyaxis_left.parameter_array,
                 "angle_paw_secondfinger_bodyaxis_hind_left": self.angle_paw_secondfinger_bodyaxis_hind_left.parameter_array,
                 "angle_paw_fifthfinger_bodyaxis_hind_left": self.angle_paw_fifthfinger_bodyaxis_hind_left.parameter_array,
+                "angle_paw_secondfinger_fifthfinger_hind_left": self.angle_paw_left_fifthfinger_secondfinger.parameter_array,
                 "hind_stance_left": self.hind_stance_left.parameter_array,
                 "hind_stance": self.hind_stance,
                 "area_hindpawleft": self.area_hindpawleft,
@@ -352,6 +354,17 @@ class Recording2D(ABC):
                 self.bodyparts["Snout"],
                 self.bodyparts["centerofgravity"],
             ),
+        )
+        
+        self.angle_paw_right_fifthfinger_secondfinger = Angle2D(
+            bodypart_a=self.bodyparts["ForePawRight"],
+            bodypart_b=self.bodyparts["ForePawRightFifthFinger"],
+            object_to_calculate_angle=self.bodyparts["ForePawRightSecondFinger"],
+        )
+        self.angle_paw_left_fifthfinger_secondfinger = Angle2D(
+            bodypart_a=self.bodyparts["ForePawLeft"],
+            bodypart_b=self.bodyparts["ForePawLegtFifthFinger"],
+            object_to_calculate_angle=self.bodyparts["ForePawLeftSecondFinger"],
         )
 
     def _add_angles_to_steps(self) -> None:
