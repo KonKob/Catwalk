@@ -13,6 +13,9 @@ from statistics import mean
 import cv2
 import pickle
 from scipy.signal import savgol_filter
+from typing import Tuple
+from numpy import ndarray
+from scipy import signal
 
 
 class Recording2D(ABC):
@@ -97,7 +100,7 @@ class Recording2D(ABC):
             },
         }
         self._add_angles_to_steps()
-        self._create_PSTHs()
+        # self._create_PSTHs()
         self._parameters_when_paw_placed()
 
     def _get_df_from_hdf(self, filepath: Path) -> pd.DataFrame:
@@ -253,7 +256,8 @@ class Recording2D(ABC):
         """
         self.steps_per_paw = {
             paw: self.bodyparts[paw].detect_steps(
-                likelihood_threshold=self.likelihood_threshold
+                likelihood_threshold=self.likelihood_threshold,
+                fps=self.recorded_framerate,
             )
             for paw in ["HindPawRight", "HindPawLeft", "ForePawRight", "ForePawLeft"]
         }
@@ -355,7 +359,7 @@ class Recording2D(ABC):
                 self.bodyparts["centerofgravity"],
             ),
         )
-        
+
         self.angle_paw_right_fifthfinger_secondfinger = Angle2D(
             bodypart_a=self.bodyparts["ForePawRight"],
             bodypart_b=self.bodyparts["ForePawRightFifthFinger"],
@@ -471,13 +475,16 @@ class Recording2D(ABC):
 
     def _parameters_when_paw_placed(self) -> None:
         self.parameters_paw_placed = {}
-        for parameter in self.parameters_over_steps:
-            try:
-                if self.parameters_over_steps[parameter][:, 12].shape[0] > 1:
-                    paw_placed = np.median(self.parameters_over_steps[parameter][:, 12])
-                    self.parameters_paw_placed[parameter] = paw_placed
-            except:
-                pass
+        for paw in ["HindPawRight", "HindPawLeft", "ForePawRight", "ForePawLeft"]:
+            for parameter in self.parameter_dict[paw].keys():
+                self.parameters_paw_placed[parameter + "_" + paw] = np.median(
+                    np.array(
+                        [
+                            self.parameter_dict[paw][parameter][step.end_index]
+                            for step in self.bodyparts[paw].steps
+                        ]
+                    )
+                )
 
 
 class Stance2D:
@@ -544,7 +551,15 @@ class Stance2D:
         return (sx, sy)
 
 
-class Bodypart2D:
+class Bodypart2D(ABC):
+    @property
+    def RELATIVE_HEIGHT(self):
+        return 0.9
+
+    @property
+    def STEP_FILTER_FREQ(self):
+        return 4
+
     def __init__(
         self,
         bodypart_id: str,
@@ -582,18 +597,92 @@ class Bodypart2D:
         self._get_speed(recorded_framerate=recorded_framerate)
         self._get_rolling_speed()
 
-    def detect_steps(self, likelihood_threshold: float = 0.7) -> List["Step"]:
+    def detect_steps(self, fps: int, likelihood_threshold: float = 0.7) -> List["Step"]:
+        # Step detection is based on Code from Elisa Garulli https://github.com/WengerLab/neurokin/blob/d077050bc8760abfe24928b53ad6383e96f59902/utils/kinematics/event_detection.py
         speed = self.df["rolling_speed_cm_per_s"].copy()
-        peaks = find_peaks(speed, prominence=10)
-        peaks_clean = peaks[0]
+        speed = speed.fillna(0)
+        lb, rb, peaks = self._get_peaks(speed, fps)
+
         peaks_clean = [
-            peak_idx
-            for peak_idx in peaks[0]
-            if self.df.loc[peak_idx, "likelihood"] >= likelihood_threshold
+            (lb[i], peak, rb[i])
+            for i, peak in enumerate(peaks)
+            if self.df.loc[peak, "likelihood"] >= likelihood_threshold
         ]
+
         steps_per_paw = self._create_steps(steps=peaks_clean)
         self.steps = steps_per_paw
         return steps_per_paw
+
+    def _get_peaks(self, y, fs):
+        """
+        Returns the left and right bounds of the gait cycle, corresponding to the toe lift off and the heel strike.
+        :param y: trace of the toe in the z coordinate
+        :return: left and right bounds
+        """
+        y = self._lowpass_array(y, self.STEP_FILTER_FREQ, fs)
+
+        max_x, _ = signal.find_peaks(y, prominence=5)
+        avg_distance = abs(int(self._median_distance(max_x) / 2))
+
+        lb = []
+        rb = []
+
+        for p in max_x:
+            left = p - avg_distance if p - avg_distance > 0 else 0
+            right = p + avg_distance if p + avg_distance < len(y) else len(y)
+            bounds = self._get_peak_boundaries_scipy(
+                y=y[left:right], px=p, left_crop=left
+            )
+            lb.append(bounds[0])
+            rb.append(bounds[1])
+
+        lb = np.asarray(lb)
+        rb = np.asarray(rb)
+        return lb, rb, max_x
+
+    def _lowpass_array(self, array, critical_freq, fs):
+        """
+        Low passes the array for a given frequency using a 2nd order butterworth filter and filtfilt to avoid phase shift.
+        :param array: input array
+        :param critical_freq: critical filter frequency
+        :param fs: sampling frequency
+        :return: filtered array
+        """
+        b, a = signal.butter(2, critical_freq, "low", output="ba", fs=fs)
+        filtered = signal.filtfilt(b, a, array)
+        return filtered
+
+    def _get_peak_boundaries_scipy(
+        self, y: ndarray, px: float, left_crop: int
+    ) -> Tuple[int, int]:
+        peaks = np.asarray([px - left_crop])
+        peak_pro = signal.peak_prominences(y, peaks)
+        peaks_width = signal.peak_widths(
+            y, peaks, rel_height=self.RELATIVE_HEIGHT, prominence_data=peak_pro
+        )
+        intersections = peaks_width[-2:]
+        try:
+            left = intersections[0] + left_crop
+        except:
+            left = left_crop
+
+        try:
+            right = intersections[-1] + left_crop
+        except:
+            right = len(y) + left_crop
+
+        return [int(left), int(right)]
+
+    def _median_distance(self, a: ndarray) -> ndarray:
+        """
+        Gets median distance between peaks
+        :param a:
+        :return: median
+        """
+        distances = []
+        for i in range(len(a) - 1):
+            distances.append(a[i] - a[i + 1])
+        return np.median(distances)
 
     def _get_sliced_df(self, df: pd.DataFrame) -> None:
         self.df_raw = pd.DataFrame(
@@ -750,9 +839,8 @@ class Bodypart2D:
         Function, that creates Step objects for every speed peak inside of a gait event.
         """
         return [
-            Step(paw=self.id, start_index=step_index)
-            for step_index in steps
-            if step_index > 7 and step_index < (self.df.shape[0] - 7)
+            Step(paw=self.id, start_idx=step[0], peak=step[1], end_idx=step[2])
+            for step in steps
         ]
 
     def _undistort_points(self, camera_parameters_for_undistortion: Dict) -> None:
@@ -874,7 +962,16 @@ class Angle2D:
 
 
 class Step:
-    def __init__(self, paw: str, start_index: int) -> None:
-        self.start_index = start_index - 7
+    def __init__(
+        self, paw: str, peak: int, end_idx: Optional = None, start_idx: Optional = None
+    ) -> None:
         self.paw = paw
-        self.end_index = start_index + 7
+        self.peak = peak
+        if start_idx == None:
+            self.start_index = peak - 7
+        else:
+            self.start_index = start_idx
+        if end_idx == None:
+            self.end_index = peak + 7
+        else:
+            self.end_index = end_idx
