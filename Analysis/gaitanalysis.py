@@ -594,11 +594,11 @@ class Bodypart2D(ABC):
         )
 
     def run_basic_operations(self, recorded_framerate: int) -> None:
+        #self._exclude_values()
         self._get_speed(recorded_framerate=recorded_framerate)
         self._get_rolling_speed()
 
     def detect_steps(self, fps: int, likelihood_threshold: float = 0.7) -> List["Step"]:
-        # Step detection is based on Code from Elisa Garulli https://github.com/WengerLab/neurokin/blob/d077050bc8760abfe24928b53ad6383e96f59902/utils/kinematics/event_detection.py
         speed = self.df["rolling_speed_cm_per_s"].copy()
         speed = speed.fillna(0)
         lb, rb, peaks = self._get_peaks(speed, fps)
@@ -613,7 +613,12 @@ class Bodypart2D(ABC):
         self.steps = steps_per_paw
         return steps_per_paw
 
+    def _exclude_values(self):
+        self.df.loc[(self.df['x'] > 5) | (self.df['x'] < -1) | (self.df['y'] > 52) | (self.df['y'] < -1), ['x', 'y']] = np.NaN
+        
+    
     def _get_peaks(self, y, fs):
+        # peak detection is based on Code from Elisa Garulli https://github.com/WengerLab/neurokin/blob/d077050bc8760abfe24928b53ad6383e96f59902/utils/kinematics/event_detection.py
         """
         Returns the left and right bounds of the gait cycle, corresponding to the toe lift off and the heel strike.
         :param y: trace of the toe in the z coordinate
@@ -622,23 +627,26 @@ class Bodypart2D(ABC):
         y = self._lowpass_array(y, self.STEP_FILTER_FREQ, fs)
 
         max_x, _ = signal.find_peaks(y, prominence=5)
-        avg_distance = abs(int(self._median_distance(max_x) / 2))
+        if len(max_x) > 2:
+            avg_distance = abs(int(self._median_distance(max_x) / 2))
 
-        lb = []
-        rb = []
+            lb = []
+            rb = []
 
-        for p in max_x:
-            left = p - avg_distance if p - avg_distance > 0 else 0
-            right = p + avg_distance if p + avg_distance < len(y) else len(y)
-            bounds = self._get_peak_boundaries_scipy(
-                y=y[left:right], px=p, left_crop=left
-            )
-            lb.append(bounds[0])
-            rb.append(bounds[1])
+            for p in max_x:
+                left = p - avg_distance if p - avg_distance > 0 else 0
+                right = p + avg_distance if p + avg_distance < len(y) else len(y)
+                bounds = self._get_peak_boundaries_scipy(
+                    y=y[left:right], px=p, left_crop=left
+                )
+                lb.append(bounds[0])
+                rb.append(bounds[1])
 
-        lb = np.asarray(lb)
-        rb = np.asarray(rb)
-        return lb, rb, max_x
+            lb = np.asarray(lb)
+            rb = np.asarray(rb)
+            return lb, rb, max_x
+        else:
+            return [], [], []
 
     def _lowpass_array(self, array, critical_freq, fs):
         """
