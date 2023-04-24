@@ -86,13 +86,13 @@ class Recording2D(ABC):
                 "hind_stance": self.hind_stance,
                 "area_hindpawleft": self.area_hindpawleft,
             },
-            "ForePawRight": {
+            "ForePawLeft": {
                 "angle_paw_secondfinger_bodyaxis_fore_left": self.angle_paw_secondfinger_bodyaxis_fore_left.parameter_array,
                 "angle_paw_fifthfinger_bodyaxis_fore_left": self.angle_paw_fifthfinger_bodyaxis_fore_left.parameter_array,
                 "fore_stance_left": self.fore_stance_left.parameter_array,
                 "fore_stance": self.fore_stance,
             },
-            "ForePawLeft": {
+            "ForePawRight": {
                 "angle_paw_secondfinger_bodyaxis_fore_right": self.angle_paw_secondfinger_bodyaxis_fore_right.parameter_array,
                 "angle_paw_fifthfinger_bodyaxis_fore_right": self.angle_paw_fifthfinger_bodyaxis_fore_right.parameter_array,
                 "fore_stance_right": self.fore_stance_right.parameter_array,
@@ -100,16 +100,12 @@ class Recording2D(ABC):
             },
         }
         self._add_angles_to_steps()
-        # self._create_PSTHs()
         self._parameters_when_paw_placed()
 
     def _get_df_from_hdf(self, filepath: Path) -> pd.DataFrame:
-        # if not filepath.endswith('.h5'):
-        #   raise ValueError('The Path you specified is not linking to a .h5-file!')
         if not filepath.endswith(".csv"):
             raise ValueError("The Path you specified is not linking to a .csv-file!")
         df = pd.read_csv(filepath)
-        # df = pd.read_hdf(filepath)
         df = df.drop("scorer", axis=1)
         df.columns = df.iloc[0, :] + "_" + df.iloc[1, :]
         df = df.drop([0, 1], axis=0)
@@ -120,12 +116,12 @@ class Recording2D(ABC):
 
     def _retrieve_metadata(self, filepath: str) -> Dict:
         """
-        relying on this file naming: 196_F7-27_220826_OTT_Bottom_synchronizedDLC_resnet152_OT_BottomCam_finalSep20shuffle1_550000filtered.h5
+        relying on this file naming: Maus01_prä-OP1_20220315DLC_resnet50_2-1413 CatwalkMay25shuffle1_600000.csv
         """
-        filepath_slices = filepath.split("_")
-        animal = filepath_slices[2]
-        paradigm = filepath_slices[3]
-        recording_date = filepath_slices[4][:-3]
+        filepath_slices = Path(filepath).name.split("_")
+        animal = filepath_slices[0]
+        paradigm = filepath_slices[1]
+        recording_date = filepath_slices[2][:-3]
         return {
             "recording_date": recording_date,
             "animal": animal,
@@ -361,14 +357,14 @@ class Recording2D(ABC):
         )
 
         self.angle_paw_right_fifthfinger_secondfinger = Angle2D(
-            bodypart_a=self.bodyparts["ForePawRight"],
-            bodypart_b=self.bodyparts["ForePawRightFifthFinger"],
-            object_to_calculate_angle=self.bodyparts["ForePawRightSecondFinger"],
+            bodypart_a=self.bodyparts["HindPawRight"],
+            bodypart_b=self.bodyparts["HindPawRightFifthFinger"],
+            object_to_calculate_angle=self.bodyparts["HindPawRightSecondFinger"],
         )
         self.angle_paw_left_fifthfinger_secondfinger = Angle2D(
-            bodypart_a=self.bodyparts["ForePawLeft"],
-            bodypart_b=self.bodyparts["ForePawLegtFifthFinger"],
-            object_to_calculate_angle=self.bodyparts["ForePawLeftSecondFinger"],
+            bodypart_a=self.bodyparts["HindPawLeft"],
+            bodypart_b=self.bodyparts["HindPawLeftFifthFinger"],
+            object_to_calculate_angle=self.bodyparts["HindPawLeftSecondFinger"],
         )
 
     def _add_angles_to_steps(self) -> None:
@@ -926,7 +922,8 @@ class Angle2D:
         length_a = self._get_length_in_2d_space(self.bodypart_b, self.bodypart_c)
         length_b = self._get_length_in_2d_space(self.bodypart_a, self.bodypart_c)
         length_c = self._get_length_in_2d_space(self.bodypart_a, self.bodypart_b)
-        return self._get_angle_from_law_of_cosines(length_a, length_b, length_c)
+        angle = self._get_angle_from_law_of_cosines(length_a, length_b, length_c)
+        return angle
 
     def _get_length_in_2d_space(
         self, object_a: Bodypart2D, object_b: Bodypart2D
@@ -941,10 +938,6 @@ class Angle2D:
                 (object_a.df_raw["x"] - object_b.df_raw["x"]) ** 2
                 + (object_a.df_raw["y"] - object_b.df_raw["y"]) ** 2
             )
-        # theoretisch ist es nicht nötig, den normalisierten df zu nutzen, da der Winkel ja relativ bestimmt wird
-        # und sich daher im df zum df_raw nicht unterscheiden dürfte, dann müsste man allerdings für alle Rechnungen df_raw benutzen,
-        # damit auch die MazeCorners zum rotieren diese Klasse callen können
-
         return length
 
     def _get_angle_from_law_of_cosines(
