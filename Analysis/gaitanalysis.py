@@ -101,6 +101,7 @@ class Recording2D(ABC):
         }
         self._add_angles_to_steps()
         self._parameters_when_paw_placed()
+        self._create_PSTHs()
 
     def _get_df_from_hdf(self, filepath: Path) -> pd.DataFrame:
         if not filepath.endswith(".csv"):
@@ -843,8 +844,8 @@ class Bodypart2D(ABC):
         Function, that creates Step objects for every speed peak inside of a gait event.
         """
         return [
-            Step(paw=self.id, start_idx=step[0], peak=step[1], end_idx=step[2])
-            for step in steps
+            Step(paw=self.id, peak=step[1])
+            for step in steps[1:-2]
         ]
 
     def _undistort_points(self, camera_parameters_for_undistortion: Dict) -> None:
