@@ -4,6 +4,8 @@ The Code to select the ROI is based on Code from @DSegebarth and @MSchellenberge
 
 For filtering and interpolation of the tracking data Code from @DSegebarth was copied into this analysis. The original Code can be found under this link: https://github.com/Defense-Circuits-Lab/Gait_Analysis/blob/8510de88e42069259981654f7adc8315d282527d/gait3d/gaitanalysis_with_top_cam.py.
 
+Step detection is based on Code from Elisa Garulli: https://github.com/WengerLab/neurokin/blob/d077050bc8760abfe24928b53ad6383e96f59902/utils/kinematics/event_detection.py
+
 For markerless position tracking of the animals, we used DeepLabCut (v2.1.8) with a resnet-50 model.
 
 <a href="https://github.com/psf/black"><img alt="Code style: black" src="https://img.shields.io/badge/code%20style-black-000000.svg"></a>
