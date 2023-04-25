@@ -258,6 +258,10 @@ class Recording2D(ABC):
             )
             for paw in ["HindPawRight", "HindPawLeft", "ForePawRight", "ForePawLeft"]
         }
+        self.steps_per_paw_normal_length = {
+            paw: self.bodyparts[paw].steps_normal_length
+            for paw in ["HindPawRight", "HindPawLeft", "ForePawRight", "ForePawLeft"]
+        }
 
     def _calculate_angles(self) -> None:
         """
@@ -380,6 +384,17 @@ class Recording2D(ABC):
                         for step in self.bodyparts[paw].steps
                     ]
                 )
+        self.parameters_over_steps_normal_length = {}
+        for paw in ["HindPawRight", "HindPawLeft", "ForePawRight", "ForePawLeft"]:
+            for parameter in self.parameter_dict[paw].keys():
+                self.parameters_over_steps_normal_length[parameter + "_" + paw] = np.array(
+                    [
+                        self.parameter_dict[paw][parameter][
+                            step.start_index : step.end_index
+                        ].values
+                        for step in self.bodyparts[paw].steps_normal_length
+                    ]
+                )
 
     def _calculate_parameters_for_gait_analysis(self) -> None:
         self.hind_stance_right = Stance2D(
@@ -466,8 +481,8 @@ class Recording2D(ABC):
 
     def _create_PSTHs(self) -> None:
         self.parameters_as_psth = {}
-        for parameter in self.parameters_over_steps:
-            psth = np.median(self.parameters_over_steps[parameter], axis=0)
+        for parameter in self.parameters_over_steps_normal_length:
+            psth = np.median(self.parameters_over_steps_normal_length[parameter], axis=0)
             self.parameters_as_psth[parameter] = psth
 
     def _parameters_when_paw_placed(self) -> None:
@@ -607,7 +622,9 @@ class Bodypart2D(ABC):
         ]
 
         steps_per_paw = self._create_steps(steps=peaks_clean)
+        steps_per_paw_normal_length = self._create_steps_normal_length(steps=peaks_clean)
         self.steps = steps_per_paw
+        self.steps_normal_length = steps_per_paw_normal_length
         return steps_per_paw
 
     def _exclude_values(self):
@@ -842,6 +859,16 @@ class Bodypart2D(ABC):
     def _create_steps(self, steps: List) -> List["Step"]:
         """
         Function, that creates Step objects for every speed peak inside of a gait event.
+        """
+        return [
+            Step(paw=self.id, peak=step[1], start_idx=step[0], end_idx=step[2])
+            for step in steps
+        ]
+    
+    def _create_steps_normal_length(self, steps: List) -> List["Step"]:
+        """
+        Function, that creates Step objects for every speed peak inside of a gait event 
+        with normalized length.
         """
         return [
             Step(paw=self.id, peak=step[1])
